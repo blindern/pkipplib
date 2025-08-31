@@ -41,7 +41,8 @@ if __name__ == "__main__" :
                     fcntl.fcntl(fd, fcntl.F_GETFL) | os.O_NONBLOCK)
 
     # then we read the notification CUPS sent us to our stdin
-    notification = pkipplib.IPPRequest(sys.stdin.read())
+    stdin_data = sys.stdin.buffer.read()
+    notification = pkipplib.IPPRequest(stdin_data)
 
     # now we parse it
     notification.parse()

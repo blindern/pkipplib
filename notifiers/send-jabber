@@ -49,7 +49,8 @@ if __name__ == "__main__" :
                     fcntl.fcntl(fd, fcntl.F_GETFL) | os.O_NONBLOCK)
 
     # then we read the notification CUPS sent us to our stdin
-    notification = pkipplib.IPPRequest(sys.stdin.read())
+    stdin_data = sys.stdin.buffer.read()
+    notification = pkipplib.IPPRequest(stdin_data)
 
     # now we parse it
     notification.parse()
@@ -96,11 +97,11 @@ if __name__ == "__main__" :
     cl=xmpp.Client(jid.getDomain(),debug=[])
     con=cl.connect()
     if not con:
-       print 'could not connect!'
+       print('could not connect!')
        sys.exit()
     auth=cl.auth(jid.getNode(),jidparams['password'],resource=jid.getResource())
     if not auth:
-       print 'could not authenticate!'
+       print('could not authenticate!')
        sys.exit()
     id = cl.send(xmpp.protocol.Message(tojid,jabberMessage))
 

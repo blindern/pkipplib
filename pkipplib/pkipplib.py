@@ -23,7 +23,8 @@
 
 import sys
 import os
-import urllib2
+import urllib.request
+import urllib.error
 import socket
 from struct import pack, unpack
 
@@ -306,7 +307,7 @@ class FakeAttribute :
                     answer.extend(attrvalue)
         if answer :
             return answer
-        raise KeyError, key
+        raise KeyError(key)
 
 class IPPRequest :
     """A class for IPP requests."""
@@ -397,7 +398,7 @@ class IPPRequest :
         if name in self.attributes_types :
             return FakeAttribute(self, name)
         else :
-            raise AttributeError, name
+            raise AttributeError(name)
 
     def __str__(self) :
         """Returns the parsed IPP message in a readable form."""
@@ -448,24 +449,25 @@ class IPPRequest :
     def dump(self) :
         """Generates an IPP Message.
 
-           Returns the message as a string of text.
+           Returns the message as bytes.
         """
         mybuffer = []
         if None not in (self.version, self.operation_id) :
-            mybuffer.append(chr(self.version[0]) + chr(self.version[1]))
+            mybuffer.append(bytes([self.version[0], self.version[1]]))
             mybuffer.append(pack(">H", self.operation_id))
             mybuffer.append(pack(">I", self.request_id or 1))
             for attrtype in self.attributes_types :
                 for attribute in getattr(self, "_%s_attributes" % attrtype) :
                     if attribute :
-                        mybuffer.append(chr(self.tagvalues["%s-attributes-tag" % attrtype]))
+                        mybuffer.append(bytes([self.tagvalues["%s-attributes-tag" % attrtype]]))
                     for (attrname, value) in attribute :
                         nameprinted = 0
                         for (vtype, val) in value :
-                            mybuffer.append(chr(self.tagvalues[vtype]))
+                            mybuffer.append(bytes([self.tagvalues[vtype]]))
                             if not nameprinted :
-                                mybuffer.append(pack(">H", len(attrname)))
-                                mybuffer.append(attrname)
+                                attrname_bytes = attrname.encode('utf-8') if isinstance(attrname, str) else attrname
+                                mybuffer.append(pack(">H", len(attrname_bytes)))
+                                mybuffer.append(attrname_bytes)
                                 nameprinted = 1
                             else :
                                 mybuffer.append(pack(">H", 0))
@@ -474,13 +476,15 @@ class IPPRequest :
                                 mybuffer.append(pack(">I", val))
                             elif vtype == "boolean" :
                                 mybuffer.append(pack(">H", 1))
-                                mybuffer.append(chr(val))
+                                mybuffer.append(bytes([val]))
                             else :
-                                mybuffer.append(pack(">H", len(val)))
-                                mybuffer.append(val)
-            mybuffer.append(chr(self.tagvalues["end-of-attributes-tag"]))
-        mybuffer.append(self.data)
-        return "".join(mybuffer)
+                                val_bytes = val.encode('utf-8') if isinstance(val, str) else val
+                                mybuffer.append(pack(">H", len(val_bytes)))
+                                mybuffer.append(val_bytes)
+            mybuffer.append(bytes([self.tagvalues["end-of-attributes-tag"]]))
+        data_bytes = self.data.encode('utf-8') if isinstance(self.data, str) else self.data
+        mybuffer.append(data_bytes)
+        return b"".join(mybuffer)
 
     def parse(self) :
         """Parses an IPP Request.
@@ -491,29 +495,31 @@ class IPPRequest :
         self._curattributes = None
 
         try :
-            self.setVersion((ord(self._data[0]), ord(self._data[1])))
+            if isinstance(self._data, str):
+                self._data = self._data.encode('latin-1')
+            self.setVersion((self._data[0], self._data[1]))
             self.setOperationId(unpack(">H", self._data[2:4])[0])
             self.setRequestId(unpack(">I", self._data[4:8])[0])
             self.position = 8
             endofattributes = self.tagvalues["end-of-attributes-tag"]
             maxdelimiter = self.tagvalues["event_notification-attributes-tag"]
             nulloffset = lambda : 0
-            tag = ord(self._data[self.position])
+            tag = self._data[self.position]
             while tag != endofattributes :
                 self.position += 1
                 name = self.tags[tag]
                 if name is not None :
                     func = getattr(self, name.replace("-", "_"), nulloffset)
                     self.position += func()
-                    if ord(self._data[self.position]) > maxdelimiter :
+                    if self._data[self.position] > maxdelimiter :
                         self.position -= 1
                         continue
                 oldtag = tag
-                tag = ord(self._data[self.position])
+                tag = self._data[self.position]
                 if tag == oldtag :
                     self._curattributes.append([])
         except IndexError :
-            raise IPPError, "Unexpected end of IPP message."
+            raise IPPError("Unexpected end of IPP message.")
 
         self.data = self._data[self.position+1:]
         self.parsed = True
@@ -521,7 +527,7 @@ class IPPRequest :
     def parseTag(self) :
         """Extracts information from an IPP tag."""
         pos = self.position
-        tagtype = self.tags[ord(self._data[pos])]
+        tagtype = self.tags[self._data[pos]]
         pos += 1
         posend = pos2 = pos + 2
         namelength = unpack(">H", self._data[pos:pos2])[0]
@@ -529,7 +535,8 @@ class IPPRequest :
             name = self._curname
         else :
             posend += namelength
-            self._curname = name = self._data[pos2:posend]
+            name_bytes = self._data[pos2:posend]
+            self._curname = name = name_bytes.decode('utf-8', errors='ignore')
         pos2 = posend + 2
         valuelength = unpack(">H", self._data[posend:pos2])[0]
         posend = pos2 + valuelength
@@ -537,7 +544,11 @@ class IPPRequest :
         if tagtype in ("integer", "enum") :
             value = unpack(">I", value)[0]
         elif tagtype == "boolean" :
-            value = ord(value)
+            value = value[0]
+        else:
+            # For text/string values, decode to string
+            if isinstance(value, bytes):
+                value = value.decode('utf-8', errors='ignore')
         try :
             (oldname, oldval) = self._curattributes[-1][-1]
             if oldname == name :
@@ -646,24 +657,24 @@ class CUPS :
            returns a new IPPRequest object, containing the parsed answer.
         """
         url = url or self.url
-        connection = urllib2.Request(url=url, \
+        connection = urllib.request.Request(url=url, \
                              data=req.dump())
         connection.add_header("Content-Type", "application/ipp")
-        proxyhandler = urllib2.ProxyHandler({})
+        proxyhandler = urllib.request.ProxyHandler({})
         if self.username :
-            pwmanager = urllib2.HTTPPasswordMgrWithDefaultRealm()
+            pwmanager = urllib.request.HTTPPasswordMgrWithDefaultRealm()
             pwmanager.add_password(None, \
                                    "%s%s" % (connection.get_host(), \
                                              connection.get_selector()), \
                                    self.username, \
                                    self.password or "")
-            authhandler = urllib2.HTTPBasicAuthHandler(pwmanager)
-            opener = urllib2.build_opener(proxyhandler, authhandler)
+            authhandler = urllib.request.HTTPBasicAuthHandler(pwmanager)
+            opener = urllib.request.build_opener(proxyhandler, authhandler)
         else : # TODO : also do this in the 'if' part
             if not url.startswith("socket:") :
-                opener = urllib2.build_opener(proxyhandler)
+                opener = urllib.request.build_opener(proxyhandler)
             else :
-                class SocketHandler(urllib2.HTTPHandler) :
+                class SocketHandler(urllib.request.HTTPHandler) :
                     """A class to handle IPP connections over an Unix domain socket."""
                     def socket_open(self, req) :
                         """Opens an Unix domain socket for IPP."""
@@ -677,14 +688,14 @@ class CUPS :
                         sys.stderr.write("Opened [%s]\n" % req.get_selector())
                         return s.makefile(mode="r+b")
 
-                opener = urllib2.build_opener(proxyhandler, SocketHandler())
+                opener = urllib.request.build_opener(proxyhandler, SocketHandler())
 
-        urllib2.install_opener(opener)
+        urllib.request.install_opener(opener)
         self.lastError = None
         self.lastErrorMessage = None
         try :
-            response = urllib2.urlopen(connection)
-        except (urllib2.URLError, urllib2.HTTPError, socket.error), error :
+            response = urllib.request.urlopen(connection)
+        except (urllib.error.URLError, urllib.error.HTTPError, socket.error) as error :
             self.lastError = error
             self.lastErrorMessage = str(error)
             return None
@@ -705,7 +716,7 @@ class CUPS :
                     sys.stderr.write("socket error\n")
                     pass
             finally :
-                datas = "".join(bytes)
+                datas = b"".join(bytes)
             if datas :
                 ippresponse = IPPRequest(datas)
                 ippresponse.parse()
@@ -822,7 +833,7 @@ class CUPS :
 
 if __name__ == "__main__" :
     if (len(sys.argv) < 2) or (sys.argv[1] == "--debug") :
-        print "usage : python pkipplib.py /var/spool/cups/c00005 [--debug] (for example)\n"
+        print("usage : python pkipplib.py /var/spool/cups/c00005 [--debug] (for example)\n")
     else :
         infile = open(sys.argv[1], "rb")
         filedata = infile.read()
@@ -835,11 +846,11 @@ if __name__ == "__main__" :
         filedata2 = msg2.dump()
 
         if filedata == filedata2 :
-            print "Test OK : parsing original and parsing the output of the dump produce the same dump !"
-            print str(msg)
+            print("Test OK : parsing original and parsing the output of the dump produce the same dump !")
+            print(str(msg))
         else :
-            print "Test Failed !"
-            print str(msg)
-            print
-            print str(msg2)
+            print("Test Failed !")
+            print(str(msg))
+            print()
+            print(str(msg2))
 

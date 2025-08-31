@@ -21,10 +21,12 @@
 #
 
 import os
-import imp
-from distutils.core import setup
+import importlib.util
+from setuptools import setup
 
-version = imp.load_source("version", os.path.join("pkipplib", "version.py"))
+spec = importlib.util.spec_from_file_location("version", os.path.join("pkipplib", "version.py"))
+version = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(version)
 
 setup(name = "pkipplib", version = version.__version__,
       license = "GNU GPL",

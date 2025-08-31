@@ -22,14 +22,14 @@
 import sys
 
 sys.path.insert(0, "../pkipplib")
-import pkipplib
+from pkipplib import pkipplib
 
 cups = pkipplib.CUPS()
 answer = cups.createSubscription("ipp://localhost/", ["printer-added", "printer-deleted"],
                                                      userdata="samplenotifier:blah",
                                                      recipient="samplenotifier",
                                                      charset="utf-8")
-print answer
+print(answer)
 
-#print answer.operation["attributes-charset"]
+#print(answer.operation["attributes-charset"])
 
